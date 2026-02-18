@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+:root {
+  /* Poster-inspired palette */
+  --igniz-maroon-950: #0f0404;
+  --igniz-maroon-900: #1b0505;
+  --igniz-maroon-800: #380403;
+  --igniz-maroon-700: #640804;
+
+  --igniz-gold-500: #c49c1a;
+  --igniz-gold-400: #e8ca4b;
+  --igniz-gold-300: #f3dd77;
+
+  --background: var(--igniz-maroon-950);
+  --foreground: #f7f5ef;
+
+  --border-subtle: rgba(255, 255, 255, 0.10);
+  --focus-ring: rgba(196, 156, 26, 0.45);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Base */
+body {
+  background: radial-gradient(
+      1100px 700px at 20% -10%,
+      rgba(196, 156, 26, 0.12),
+      transparent 55%
+    ),
+    radial-gradient(
+      900px 600px at 120% 0%,
+      rgba(232, 202, 75, 0.06),
+      transparent 60%
+    ),
+    linear-gradient(180deg, var(--igniz-maroon-900), var(--igniz-maroon-950));
+  color: var(--foreground);
+  font-family: var(--font-sans, Arial, Helvetica, sans-serif);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Selection */
+::selection {
+  background: rgba(196, 156, 26, 0.25);
+  color: inherit;
+}
+
+/* Focus */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+  border-radius: 8px;
+}
+
+/* Scrollbars (Chromium/Edge) */
+*::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.24) rgba(0, 0, 0, 0.35);
+}
+
+/* Tables */
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+th,
+td {
+  vertical-align: top;
+}
+
+/* Buttons & inputs baseline */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
