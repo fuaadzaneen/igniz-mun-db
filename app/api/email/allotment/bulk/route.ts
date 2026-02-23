@@ -1,6 +1,9 @@
 import { supabaseAdmin } from "@/src/lib/supabase";
 import { getFrom, getTransport } from "@/src/lib/mailer";
+
 import { renderIgnizAllotmentEmail } from "@/src/email/ignizAllotmentTemplate";
+import { renderIgnizAllotmentRound2Email } from "@/src/email/ignizAllotmentRound2Template";
+import { renderIgnizRejectionEmail } from "@/src/email/ignizRejectionTemplate";
 
 export async function POST(req: Request) {
   const results: Array<{ id: string; ok: boolean; error?: string }> = [];
@@ -14,7 +17,9 @@ export async function POST(req: Request) {
 
     const { data: delegates, error } = await supabaseAdmin
       .from("delegates")
-      .select("id, full_name, email, reg_id, pass_tier, allotted_committee, allotted_portfolio")
+      .select(
+  "id, full_name, email, reg_id, pass_tier, allotted_committee, allotted_portfolio, round, decision, status"
+)
       .in("id", uniq);
 
     if (error || !delegates) throw new Error("Failed to fetch delegates");
@@ -28,16 +33,44 @@ export async function POST(req: Request) {
     for (const d of ordered) {
       try {
         if (!d.email) throw new Error("Missing email");
-        if (!d.allotted_committee || !d.allotted_portfolio) {
-          throw new Error("Allotment missing");
-        }
 
-        const mail = renderIgnizAllotmentEmail({
-          name: d.full_name ?? "Delegate",
-          committee: d.allotted_committee,
-          country: d.allotted_portfolio,
-          passTier: d.pass_tier,
-        });
+        const roundStr = String(d.round || "Main");
+        const isRound2 = roundStr.toLowerCase().includes("round2") || roundStr === "2";
+
+        // Decide mail type:
+        // - if decision is rejected => rejection template
+        // - else => allotment template (requires committee+portfolio)
+        let mail: { subject: string; html: string; text: string };
+
+        const isRejected =
+  (d.decision || "").toLowerCase() === "rejected" ||
+  (d.status || "").toLowerCase() === "rejected";
+
+if (isRejected) {
+          mail = renderIgnizRejectionEmail({
+            name: d.full_name ?? "Delegate",
+            round: isRound2 ? 2 : 1,
+          });
+        } else {
+          if (!d.allotted_committee || !d.allotted_portfolio) {
+            throw new Error("Allotment missing");
+          }
+
+          mail = isRound2
+            ? renderIgnizAllotmentRound2Email({
+                name: d.full_name ?? "Delegate",
+                committee: d.allotted_committee,
+                country: d.allotted_portfolio,
+                passTier: d.pass_tier,
+                round: 2,
+              })
+            : renderIgnizAllotmentEmail({
+                name: d.full_name ?? "Delegate",
+                committee: d.allotted_committee,
+                country: d.allotted_portfolio,
+                passTier: d.pass_tier,
+              });
+        }
 
         await transport.sendMail({
           from,

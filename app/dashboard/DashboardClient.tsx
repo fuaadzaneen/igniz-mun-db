@@ -12,10 +12,6 @@ function fmtDate(v: any) {
   return d.toLocaleString();
 }
 
-function cn(...xs: Array<string | false | undefined | null>) {
-  return xs.filter(Boolean).join(" ");
-}
-
 function Badge({ text, title }: { text: string; title?: string }) {
   const t = (text ?? "").toString();
   const lower = t.toLowerCase();
@@ -270,11 +266,9 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
     setSelected(r);
     setTab(which);
 
-    // allot fields
     setAc(r.allotted_committee ?? "");
     setAp(r.allotted_portfolio ?? "");
 
-    // detail fields
     setFullName(r.full_name ?? "");
     setWhatsapp(r.whatsapp ?? "");
     setCollege(r.college ?? "");
@@ -307,7 +301,6 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || "Failed");
 
-      // keep modal open after Save (so you can press Finalize next if you want)
       router.refresh();
       alert("Saved ✅ (now you can Finalize)");
     } catch (e: any) {
@@ -321,11 +314,6 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
     if (!selected) return;
     if (!ac.trim() || !ap.trim()) return alert("Committee + Portfolio required");
 
-    // IMPORTANT:
-    // This assumes your backend route /api/delegates/finalize will:
-    // 1) save allotted_committee + allotted_portfolio
-    // 2) set status = "Allotted" (or whatever you use)
-    // If you DON'T have this route yet, create it, or change this to /api/delegates/update.
     setFinalizing(true);
     try {
       const res = await fetch("/api/delegates/finalize", {
@@ -352,6 +340,34 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
       setFinalizing(false);
     }
   }
+
+  async function rejectDelegate() {
+  if (!selected) return;
+  if (!confirm(`Reject ${selected.full_name}?`)) return;
+
+  setSaving(true);
+  try {
+    const res = await fetch("/api/delegates/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: selected.id,
+        patch: { status: "Rejected" },
+      }),
+    });
+
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || "Reject failed");
+
+    setSelected(null);
+    router.refresh();
+    alert("Rejected ✅");
+  } catch (e: any) {
+    alert(e?.message ?? "Reject failed");
+  } finally {
+    setSaving(false);
+  }
+}
 
   async function clearAllotment() {
     if (!selected) return;
@@ -440,27 +456,26 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
     router.push("/dashboard");
   }
 
-  async function syncNow() {
-  const activeRound = round || "Priority"; // fallback safety
+  // ✅ FIXED: Default to Main (IGNIZ) instead of Priority.
+  async function syncNow(roundParam?: string) {
+    const activeRound = (roundParam || round || "Main").trim();
 
-  setSyncing(true);
-  try {
-    const res = await fetch(`/api/sync/registrations?round=${activeRound}`, {
-      method: "POST",
-    });
+    setSyncing(true);
+    try {
+      const res = await fetch(`/api/sync/registrations?round=${encodeURIComponent(activeRound)}`, {
+        method: "POST",
+      });
 
-    const json = await res.json();
-    alert(
-      `Sync ${activeRound}: ${json.ok ? "OK" : "FAILED"} | imported: ${json.imported ?? "?"}`
-    );
-    router.refresh();
-  } catch (e: any) {
-    alert(e?.message ?? "Sync failed");
-  } finally {
-    setSyncing(false);
+      const json = await res.json();
+      alert(
+  `Sync ${activeRound}: ${json.ok ? "OK" : "FAILED"} | imported: ${json.imported ?? "?"}${json.error ? ` | error: ${json.error}` : ""}`);
+      router.refresh();
+    } catch (e: any) {
+      alert(e?.message ?? "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
   }
-}
-
 
   function exportCsv() {
     const headers = [
@@ -598,20 +613,23 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-  <Btn onClick={exportCsv} variant="ghost">
-    Export CSV
-  </Btn>
+          <Btn onClick={exportCsv} variant="ghost">
+            Export CSV
+          </Btn>
 
-  <Btn onClick={bulkSendView} disabled={bulkSending} title="Send emails to current view">
-    {bulkSending ? "Bulk Sending…" : "Bulk Email (View)"}
-  </Btn>
+          <Btn onClick={bulkSendView} disabled={bulkSending} title="Send emails to current view">
+            {bulkSending ? "Bulk Sending…" : "Bulk Email (View)"}
+          </Btn>
 
-  <Btn onClick={syncNow} disabled={syncing} title="Sync from Google Sheets">
-    {syncing ? "Syncing…" : "Sync from Sheets"}
-  </Btn>
+          {/* ✅ Better sync buttons */}
+          <Btn onClick={() => syncNow("Main")} disabled={syncing} title="Sync Round 1 (Main) sheet">
+            {syncing ? "Syncing…" : "Sync Main"}
+          </Btn>
 
+          <Btn onClick={() => syncNow("Round2")} disabled={syncing} title="Sync Round 2 sheet">
+            {syncing ? "Syncing…" : "Sync Round 2"}
+          </Btn>
         </div>
-
       </div>
 
       {/* filters */}
@@ -691,7 +709,7 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
 
       {/* table */}
       <div style={{ border: "1px solid rgba(255,255,255,0.10)", borderRadius: 16, overflow: "hidden", background: "rgba(0,0,0,0.22)" }}>
-        <div ref={scrollerRef} style={{ maxHeight: "70vh", overflow: "auto" }}>
+        <div style={{ maxHeight: "70vh", overflow: "auto" }} ref={scrollerRef}>
           <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 13, minWidth: 1600 }}>
             <thead style={{ position: "sticky", top: 0, zIndex: 5 }}>
               <tr style={{ background: "rgba(10,10,10,0.96)" }}>
@@ -736,6 +754,7 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                 const emailStatus = (r.email_status ?? "not_sent").toString();
                 const sentAt = fmtDate(r.email_sent_at);
                 const err = (r.email_error ?? "").toString();
+
                 const canSend = !!r.email && !!r.allotted_committee && !!r.allotted_portfolio;
 
                 return (
@@ -745,7 +764,6 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                     onMouseEnter={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = "rgba(255,255,255,0.035)")}
                     onMouseLeave={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = "transparent")}
                   >
-                    {/* sticky name */}
                     <td
                       style={{
                         padding: 12,
@@ -762,7 +780,9 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                     </td>
 
                     <td style={{ padding: 12, minWidth: 250 }}>
-                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, opacity: 0.95 }}>{r.email}</span>
+                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, opacity: 0.95 }}>
+                        {r.email}
+                      </span>
                     </td>
 
                     <td style={{ padding: 12, minWidth: 140 }}>{r.whatsapp}</td>
@@ -791,8 +811,15 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                     </td>
 
                     <td style={{ padding: 12, minWidth: 120 }}>{r.round}</td>
+
+                    {/* ✅ FIX: Pass column should show pass_tier */}
                     <td style={{ padding: 12, minWidth: 130 }}>
-                      <Badge text={r.status ?? ""} />
+                      {r.pass_tier ? <Badge text={r.pass_tier} /> : <span style={{ opacity: 0.45 }}>—</span>}
+                    </td>
+
+                    {/* ✅ FIX: Status column should show status */}
+                    <td style={{ padding: 12, minWidth: 130 }}>
+                      {r.status ? <Badge text={r.status} /> : <span style={{ opacity: 0.45 }}>—</span>}
                     </td>
 
                     <td style={{ padding: 12, minWidth: 140 }}>
@@ -817,7 +844,9 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                     <td style={{ padding: 12, minWidth: 360 }}>
                       <details>
                         <summary style={{ cursor: "pointer", userSelect: "none" }}>View</summary>
-                        <pre style={{ whiteSpace: "pre-wrap", marginTop: 10, opacity: 0.9 }}>{JSON.stringify(r.preferences ?? {}, null, 2)}</pre>
+                        <pre style={{ whiteSpace: "pre-wrap", marginTop: 10, opacity: 0.9 }}>
+                          {JSON.stringify(r.preferences ?? {}, null, 2)}
+                        </pre>
                       </details>
                     </td>
 
@@ -845,7 +874,7 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
 
               {filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={14} style={{ padding: 16, opacity: 0.7 }}>
+                  <td colSpan={15} style={{ padding: 16, opacity: 0.7 }}>
                     No results
                   </td>
                 </tr>
@@ -887,9 +916,7 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
               overflow: "hidden",
             }}
           >
-            {/* THIS wrapper is the fix so buttons never disappear off-screen */}
             <div style={{ padding: 16, maxHeight: "86vh", overflowY: "auto" }}>
-              {/* top */}
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
                 <div>
                   <div style={{ fontSize: 18, fontWeight: 950 }}>{selected.full_name}</div>
@@ -900,6 +927,7 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                     {selected.ca_code ? <Badge text={`CA: ${selected.ca_code}`} /> : <Badge text="CA: —" />}
                     {selected.round ? <Badge text={`Round: ${selected.round}`} /> : null}
                     {selected.status ? <Badge text={selected.status} /> : null}
+                    {selected.pass_tier ? <Badge text={`Pass: ${selected.pass_tier}`} /> : null}
                   </div>
                 </div>
 
@@ -908,7 +936,6 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                 </Btn>
               </div>
 
-              {/* tabs */}
               <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
                 <button onClick={() => setTab("allot")} style={tabBtnStyle(tab === "allot")}>
                   Allotment
@@ -918,7 +945,6 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                 </button>
               </div>
 
-              {/* content */}
               {tab === "allot" ? (
                 <>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 14 }}>
@@ -933,7 +959,6 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                     </pre>
                   </div>
 
-                  {/* BUTTONS YOU NEEDED (SAVE + FINALIZE) */}
                   <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14, flexWrap: "wrap" }}>
                     <Btn onClick={clearAllotment} disabled={saving || finalizing} variant="danger">
                       {saving ? "Working…" : "Clear Allotment"}
@@ -951,6 +976,14 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                     >
                       {finalizing ? "Finalizing…" : "Finalize Allotment"}
                     </Btn>
+                    <Btn
+                      onClick={rejectDelegate}
+                      disabled={saving || finalizing}
+                      variant="danger"
+                      title="Mark delegate as Rejected"
+                      >
+                      {saving ? "Working…" : "Reject"}
+                    </Btn>
                   </div>
 
                   <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
@@ -965,7 +998,8 @@ export default function DashboardClient({ rows }: { rows: Row[] }) {
                     <Field label="College" value={college} onChange={setCollege} placeholder="College" />
                     <Field label="Course" value={course} onChange={setCourse} placeholder="Course" />
                     <Field label="Category" value={catEdit} onChange={setCatEdit} placeholder="Category" />
-                    <Field label="Round" value={roundEdit} onChange={setRoundEdit} placeholder="Priority/Regular..." />
+                    <Field label="Round" value={roundEdit} onChange={setRoundEdit} placeholder="Main/Round2..." />
+                    <Field label="Pass Tier" value={passEdit} onChange={setPassEdit} placeholder="Silver/Gold..." />
                     <Field label="Status" value={statusEdit} onChange={setStatusEdit} placeholder="Registered/Allotted..." />
                     <Field label="CA Code" value={caCode} onChange={setCaCode} placeholder="Campus ambassador code" mono />
                   </div>

@@ -37,22 +37,24 @@ function parseMap(envKey: string, fallback: MapAny): MapAny {
   }
 }
 
-// ---------- IGNIZ (single-sheet) defaults ----------
-// Adjust quickly via env: IGNIZ_COLUMN_MAP_JSON
+// ---------- IGNIZ defaults ----------
 const IGNIZ_DEFAULT_MAP = {
   timestamp: 0,
-  full_name: 1,
-  whatsapp: 2,
-  college: 3,
-  email: 4,
-  country_pref1: 5,
-  country_pref2: 6,
-  country_pref3: 7,
-  mun_experience: 8,
-  pass_tier: 9,
+  email: 1,
+  full_name: 2,
+  age: 3,
+  whatsapp: 4,
+  college: 5,
+  course: 6,
+  country_pref1: 7,
+  country_pref2: 8,
+  country_pref3: 9,
+  mun_experience: 10,
+  pass_tier: 11,
+  agreement: 12,
+  further_queries: 13,
 };
-
-// ---------- LEGACY (multi-round) mappings kept for compatibility ----------
+// ---------- LEGACY mappings ----------
 const COL_PRIORITY = {
   timestamp: 0,
   full_name: 1,
@@ -128,25 +130,50 @@ const COL_LIGHTNING = {
 export async function POST(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const roundParam = searchParams.get("round")?.trim() || "";
 
-    // If IGNIZ sheet env exists, default to IGNIZ mode.
+    // Support ?round=Main or ?round=Round2 (IGNIZ)
+    const roundParam = (searchParams.get("round")?.trim() || "").toLowerCase();
+
+    // Determine IGNIZ round target
+    const isIgnizRound2 = roundParam === "round2" || roundParam === "2";
+
+    // IGNIZ vars (Round 1)
     const ignizSheetId = process.env.IGNIZ_SHEET_ID;
     const ignizSheetName = process.env.IGNIZ_SHEET_NAME;
 
+    // IGNIZ vars (Round 2)
+    const igniz2SheetId = process.env.IGNIZ_ROUND2_SHEET_ID;
+    const igniz2SheetName = process.env.IGNIZ_ROUND2_SHEET_NAME;
+
+    // If IGNIZ env exists, use IGNIZ mode
     if (ignizSheetId && ignizSheetName) {
-      const mapping = parseMap("IGNIZ_COLUMN_MAP_JSON", IGNIZ_DEFAULT_MAP);
       const sheets = getSheetsClient(true);
 
+      const sheetId = isIgnizRound2 ? igniz2SheetId : ignizSheetId;
+      const sheetName = isIgnizRound2 ? igniz2SheetName : ignizSheetName;
+
+      if (isIgnizRound2 && (!sheetId || !sheetName)) {
+        throw new Error("Missing IGNIZ_ROUND2_SHEET_ID or IGNIZ_ROUND2_SHEET_NAME");
+      }
+
+      const mapping = isIgnizRound2
+        ? parseMap("IGNIZ_ROUND2_COLUMN_MAP_JSON", IGNIZ_DEFAULT_MAP)
+        : parseMap("IGNIZ_COLUMN_MAP_JSON", IGNIZ_DEFAULT_MAP);
+
       const resp = await sheets.spreadsheets.values.get({
-        spreadsheetId: ignizSheetId,
-        range: `${ignizSheetName}!A1:AZ`,
+        spreadsheetId: sheetId!,
+        range: `${sheetName}!A1:AZ`,
       });
 
       const values = resp.data.values ?? [];
       if (values.length < 2) return Response.json({ ok: true, imported: 0 });
 
       const rows = values.slice(1);
+
+      const roundLabel =
+        isIgnizRound2
+          ? (process.env.IGNIZ_ROUND2_LABEL || "Round2")
+          : (process.env.IGNIZ_ROUND1_LABEL || "Main");
 
       const payload = rows
         .filter((r) => cell(r, mapping.email))
@@ -166,7 +193,9 @@ export async function POST(req: Request) {
           return {
             reg_id: `${prefix}-${emailKey}-${tsTail}`,
             source_timestamp: ts,
-            round: roundParam || "Main",
+
+            // IMPORTANT: round is what differentiates Round1 vs Round2 in DB
+            round: roundLabel,
 
             full_name: cell(r, mapping.full_name),
             whatsapp: cell(r, mapping.whatsapp),
@@ -185,35 +214,61 @@ export async function POST(req: Request) {
             preferences: {
               country_preferences: countries,
             },
+
+            // Optional: decision flag
+            decision: "pending",
           };
         });
 
+      // Unique by (email + round)
       const unique = new Map<string, any>();
-      for (const row of payload) unique.set(row.email.toLowerCase(), row);
+      for (const row of payload) {
+        const key = `${row.email.toLowerCase()}::${row.round}`;
+        unique.set(key, row);
+      }
 
-      const { error } = await supabaseAdmin.from("delegates").upsert([...unique.values()], {
-        onConflict: "email",
-      });
+      const { error } = await supabaseAdmin
+        .from("delegates")
+        .upsert([...unique.values()], { onConflict: "email,round" });
+
       if (error) throw error;
 
-      return Response.json({ ok: true, imported: unique.size, mode: "igniz" });
+      return Response.json({
+        ok: true,
+        imported: unique.size,
+        mode: isIgnizRound2 ? "igniz_round2" : "igniz_round1",
+        round: roundLabel,
+      });
     }
 
     // ----- Legacy mode (multi-round) -----
-    const round = roundParam;
+    const round = searchParams.get("round")?.trim() || "";
     if (!round || !["Priority", "First", "Lightning"].includes(round)) {
       throw new Error(
         "Missing or invalid round. Provide ?round=Priority|First|Lightning, or set IGNIZ_SHEET_ID+IGNIZ_SHEET_NAME for IGNIZ mode."
       );
     }
 
-    const mapping = round === "Priority" ? COL_PRIORITY : round === "First" ? COL_FIRST : COL_LIGHTNING;
+    const mapping =
+      round === "Priority"
+        ? COL_PRIORITY
+        : round === "First"
+        ? COL_FIRST
+        : COL_LIGHTNING;
 
     const SHEET_ID =
-      round === "Priority" ? process.env.PRIORITY_SHEET_ID : round === "First" ? process.env.FIRST_SHEET_ID : process.env.LIGHTNING_SHEET_ID;
+      round === "Priority"
+        ? process.env.PRIORITY_SHEET_ID
+        : round === "First"
+        ? process.env.FIRST_SHEET_ID
+        : process.env.LIGHTNING_SHEET_ID;
 
     const SHEET_NAME =
-      round === "Priority" ? process.env.PRIORITY_SHEET_NAME : round === "First" ? process.env.FIRST_SHEET_NAME : process.env.LIGHTNING_SHEET_NAME;
+      round === "Priority"
+        ? process.env.PRIORITY_SHEET_NAME
+        : round === "First"
+        ? process.env.FIRST_SHEET_NAME
+        : process.env.LIGHTNING_SHEET_NAME;
 
     if (!SHEET_ID || !SHEET_NAME) throw new Error("Missing sheet env vars");
 
@@ -237,7 +292,8 @@ export async function POST(req: Request) {
         const emailKey = email.split("@")[0].slice(0, 6);
         const tsTail = ts.replace(/\D+/g, "").slice(-8);
 
-        const prefix = round === "Priority" ? "PR" : round === "First" ? "FR" : "LR";
+        const prefix =
+          round === "Priority" ? "PR" : round === "First" ? "FR" : "LR";
 
         return {
           reg_id: `${prefix}-${emailKey}-${tsTail}`,
@@ -259,27 +315,41 @@ export async function POST(req: Request) {
           preferences: {
             pref1: {
               committee: cell(r, mapping.c1),
-              portfolios: [cell(r, mapping.c1_p1), cell(r, mapping.c1_p2), cell(r, mapping.c1_p3)].filter(Boolean),
+              portfolios: [
+                cell(r, mapping.c1_p1),
+                cell(r, mapping.c1_p2),
+                cell(r, mapping.c1_p3),
+              ].filter(Boolean),
             },
             pref2: {
               committee: cell(r, mapping.c2),
-              portfolios: [cell(r, mapping.c2_p1), cell(r, mapping.c2_p2), cell(r, mapping.c2_p3)].filter(Boolean),
+              portfolios: [
+                cell(r, mapping.c2_p1),
+                cell(r, mapping.c2_p2),
+                cell(r, mapping.c2_p3),
+              ].filter(Boolean),
             },
             pref3: {
               committee: cell(r, mapping.c3),
-              portfolios: [cell(r, mapping.c3_p1), cell(r, mapping.c3_p2), cell(r, mapping.c3_p3)].filter(Boolean),
+              portfolios: [
+                cell(r, mapping.c3_p1),
+                cell(r, mapping.c3_p2),
+                cell(r, mapping.c3_p3),
+              ].filter(Boolean),
             },
           },
-          // NOTE: Status omitted to preserve existing "Allotted" statuses
         };
       });
 
     const unique = new Map<string, any>();
-    for (const row of payload) unique.set(row.email.toLowerCase(), row);
+    for (const row of payload) {
+      // legacy keeps unique by email only
+      unique.set(row.email.toLowerCase(), row);
+    }
 
-    const { error } = await supabaseAdmin.from("delegates").upsert([...unique.values()], {
-      onConflict: "email",
-    });
+    const { error } = await supabaseAdmin
+      .from("delegates")
+      .upsert([...unique.values()], { onConflict: "email" });
 
     if (error) throw error;
 
