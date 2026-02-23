@@ -37,7 +37,6 @@ export async function POST(req: Request) {
           committee: d.allotted_committee,
           country: d.allotted_portfolio,
           passTier: d.pass_tier,
-          regId: d.reg_id,
         });
 
         await transport.sendMail({
